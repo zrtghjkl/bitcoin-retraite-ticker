@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticker Crypto et Actions</title>
+</head>
+<body>
+    <!-- Conteneur pour le ticker -->
+    <div id="crypto-ticker" style="width: 100%; height: 40px; overflow: hidden; position: relative; background-color: transparent;"></div>
+
+    <script>
+    (function() {
+        const TICKER_ID = 'crypto-ticker';
+        const UPDATE_INTERVAL = 300000; // 5 minutes
+        const ANIMATION_SPEED = 1;
+        const FONT_SIZE = '24px';
+        const TEXT_COLOR = '#333333';
+
+        // Structure des actifs
+        const assets = {
+            bitcoin: {
+                name: 'Bitcoin',
+                symbol: 'BTC-USD',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            ethereum: {
+                name: 'Ethereum', 
+                symbol: 'ETH-USD',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            mara: {
+                name: 'Marathon Digital',
+                symbol: 'MARA',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            mstr: {
+                name: 'MicroStrategy',
+                symbol: 'MSTR', 
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            coin: {
+                name: 'Coinbase Global',
+                symbol: 'COIN',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            btbt: {
+                name: 'Bit Digital',
+                symbol: 'BTBT',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            clsk: {
+                name: 'CleanSpark',
+                symbol: 'CLSK',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            riot: {
+                name: 'Riot Platform',
+                symbol: 'RIOT',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            btdr: {
+                name: 'Bitdeer Technologies',
+                symbol: 'BTDR',
+                currentPrice: null,
+                previousDayPrice: null
+            },
+            mlnx: {
+                name: 'Melanion',
+                symbol: 'BTC.PA',
+                currentPrice: null,
+                previousDayPrice: null,
+                isEuro: true
+            }
+        };
+
+        let tickerContainer = null;
+        let tickerText = null;
+        let animationFrame = null;
+        let tickerWidth = 0;
+        let animationOffset = 0;
+        let containerWidth = 0;
+        let isUpdating = false;
+        let tickerStarted = false;
+
+        const displayOrder = ['bitcoin', 'ethereum', 'mara', 'mstr', 'coin', 'btbt', 'clsk', 'riot', 'btdr', 'mlnx'];
+
+        function init() {
+            setupContainer();
+            // ÉTAPE 1: Lancer les requêtes AVANT tout
+            loadInitialDataThenStart();
+        }
+
+        function setupContainer() {
+            tickerContainer = document.getElementById(TICKER_ID);
+            containerWidth = tickerContainer.offsetWidth;
+
+            tickerText = document.createElement('div');
+            tickerText.style.cssText = `position: absolute; white-space: nowrap; font-size: ${FONT_SIZE}; font-weight: bold; left: 0px; top: 50%; transform: translateY(-50%);`;
+            tickerContainer.appendChild(tickerText);
+
+            // PAS D'AFFICHAGE tant que les données ne sont pas récupérées
+            tickerText.innerHTML = '';
+        }
+
+        // ÉTAPE 1: Récupérer TOUS les cours avant de démarrer
+        async function loadInitialDataThenStart() {
+            console.log('🔄 Récupération des cours...');
+            
+            // CHANGEMENT ICI : Une seule requête vers Netlify au lieu de 10 requêtes
+            try {
+                const response = await fetch('/.netlify/functions/ticker');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('✅ Données reçues de Netlify:', data);
+                    
+                    if (data.success && data.data) {
+                        // Mapper les données Netlify vers votre structure
+                        mapNetlifyDataToAssets(data.data);
+                        
+                        console.log('✅ Cours récupérés, démarrage du ticker...');
+                        
+                        // ÉTAPE 2: Afficher avec TOUS les cours disponibles
+                        updateDisplay();
+                        
+                        // ÉTAPE 3: Démarrer l'animation SEULEMENT maintenant
+                        startAnimation();
+                        tickerStarted = true;
+                        
+                        // ÉTAPE 4: Programmer les mises à jour
+                        setupPeriodicUpdates();
+                    }
+                } else {
+                    console.error('Erreur requête Netlify:', response.status);
+                }
+            } catch (error) {
+                console.error('Erreur connexion:', error);
+            }
+        }
+
+        // Nouvelle fonction pour mapper les données Netlify
+        function mapNetlifyDataToAssets(netlifyData) {
+            // Bitcoin
+            if (netlifyData.bitcoin) {
+                assets.bitcoin.currentPrice = netlifyData.bitcoin.currentPrice;
+                assets.bitcoin.previousDayPrice = netlifyData.bitcoin.currentPrice / (1 + netlifyData.bitcoin.change24h/100);
+            }
+            
+            // Ethereum
+            if (netlifyData.ethereum) {
+                assets.ethereum.currentPrice = netlifyData.ethereum.currentPrice;
+                assets.ethereum.previousDayPrice = netlifyData.ethereum.currentPrice / (1 + netlifyData.ethereum.change24h/100);
+            }
+            
+            // Actions
+            const actionMapping = {
+                'mara': 'mara',
+                'mstr': 'mstr', 
+                'coin': 'coin',
+                'btbt': 'btbt',
+                'clsk': 'clsk',
+                'riot': 'riot',
+                'btdr': 'btdr'
+            };
+            
+            Object.keys(actionMapping).forEach(key => {
+                if (netlifyData[key]) {
+                    assets[actionMapping[key]].currentPrice = netlifyData[key].currentPrice;
+                    assets[actionMapping[key]].previousDayPrice = netlifyData[key].currentPrice / (1 + netlifyData[key].change24h/100);
+                }
+            });
+            
+            // Melanion
+            if (netlifyData.mlnx) {
+                assets.mlnx.currentPrice = netlifyData.mlnx.currentPrice;
+                assets.mlnx.previousDayPrice = netlifyData.mlnx.currentPrice / (1 + netlifyData.mlnx.change24h/100);
+            }
+        }
+
+        // Mises à jour périodiques (maintenant via Netlify)
+        function setupPeriodicUpdates() {
+            setInterval(async () => {
+                if (isUpdating) return;
+                isUpdating = true;
+                
+                console.log('🔄 Mise à jour des cours...');
+                
+                try {
+                    const response = await fetch('/.netlify/functions/ticker');
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.data) {
+                            mapNetlifyDataToAssets(data.data);
+                            updateDisplay();
+                            console.log('✅ Cours mis à jour');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Erreur mise à jour:', error);
+                }
+                
+                isUpdating = false;
+            }, UPDATE_INTERVAL);
+        }
+
+        function updateDisplay() {
+            if (!tickerText) return;
+            
+            let html = '';
+            let validCount = 0;
+            
+            displayOrder.forEach((assetId, index) => {
+                const asset = assets[assetId];
+                if (asset && asset.currentPrice) {
+                    html += generateAssetHTML(assetId);
+                    validCount++;
+                    
+                    if (index < displayOrder.length - 1) {
+                        html += '<span style="color: #ccc; margin: 0 20px;">•</span>';
+                    }
+                }
+            });
+            
+            // Ne rien afficher si aucun cours valide
+            if (validCount === 0) {
+                html = '';
+            }
+            
+            tickerText.innerHTML = html;
+            tickerWidth = tickerText.offsetWidth;
+        }
+
+        function generateAssetHTML(assetId) {
+            const asset = assets[assetId];
+            if (!asset || !asset.currentPrice) return '';
+            
+            const currentPrice = asset.currentPrice;
+            const previousPrice = asset.previousDayPrice || currentPrice;
+            
+            const formattedPrice = currentPrice.toFixed(2);
+            const percentChange = ((currentPrice / previousPrice) - 1) * 100;
+            const percentText = Math.abs(percentChange).toFixed(2) + '%';
+            const sign = percentChange >= 0 ? '+' : '-';
+            const color = percentChange >= 0 ? '#2ecc71' : '#e74c3c';
+            
+            const currencySymbol = asset.isEuro ? '€' : '$';
+            
+            return `<span style="color: ${TEXT_COLOR};">${asset.name}: <strong>${formattedPrice}${currencySymbol}</strong></span> <span style="color: ${color};">${sign}${percentText}</span>`;
+        }
+
+        function startAnimation() {
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+            }
+            
+            // Démarrer à gauche hors écran
+            animationOffset = -tickerWidth;
+            
+            function animate() {
+                animationOffset += ANIMATION_SPEED;
+                tickerText.style.left = animationOffset + 'px';
+                
+                if (animationOffset > containerWidth) {
+                    animationOffset = -tickerWidth;
+                }
+                
+                animationFrame = requestAnimationFrame(animate);
+            }
+            
+            animate();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+
+    })();
+    </script>
+</body>
+</html>
