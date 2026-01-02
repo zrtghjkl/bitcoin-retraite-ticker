@@ -1,7 +1,6 @@
 /**
  * Fonction Netlify Ticker - Projet Bitcoin-Retraite
- * Version Optimisée : Batch Request pour Yahoo Finance
- * Évite les blocages de proxy en groupant toutes les actions en 1 seule requête.
+ * Version Ultra-Robuste : Batch Yahoo Finance + Gestion d'erreurs améliorée
  */
 
 exports.handler = async (event, context) => {
@@ -16,29 +15,34 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, headers, body: '' };
   }
 
-  try {
-    const results = {};
+  const results = {};
 
-    // 1. CRYPTOS via CoinGecko (Stable)
+  try {
+    // 1. CRYPTOS via CoinGecko (Indépendant)
     try {
       const cryptoRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true');
       if (cryptoRes.ok) {
         const cryptoData = await cryptoRes.json();
-        results.bitcoin = {
-          name: 'Bitcoin',
-          currentPrice: cryptoData.bitcoin.usd,
-          change24h: cryptoData.bitcoin.usd_24h_change || 0
-        };
-        results.ethereum = {
-          name: 'Ethereum',
-          currentPrice: cryptoData.ethereum.usd,
-          change24h: cryptoData.ethereum.usd_24h_change || 0
-        };
+        if (cryptoData.bitcoin) {
+          results.bitcoin = {
+            name: 'Bitcoin',
+            currentPrice: cryptoData.bitcoin.usd,
+            change24h: cryptoData.bitcoin.usd_24h_change || 0
+          };
+        }
+        if (cryptoData.ethereum) {
+          results.ethereum = {
+            name: 'Ethereum',
+            currentPrice: cryptoData.ethereum.usd,
+            change24h: cryptoData.ethereum.usd_24h_change || 0
+          };
+        }
       }
-    } catch (e) { console.error('Erreur Crypto:', e); }
+    } catch (e) {
+      console.error('Erreur CoinGecko:', e.message);
+    }
 
-    // 2. ACTIONS + MELANION via Yahoo Finance (Batch Mode)
-    // On groupe tout pour ne faire qu'UN SEUL appel au proxy Allorigins
+    // 2. ACTIONS via Yahoo Finance (Batch)
     const stockMapping = {
       'MARA': { key: 'mara', name: 'Marathon Digital' },
       'MSTR': { key: 'mstr', name: 'MicroStrategy' },
@@ -50,36 +54,42 @@ exports.handler = async (event, context) => {
       'BTC.PA': { key: 'mlnx', name: 'Melanion', isEuro: true }
     };
 
-    const symbols = Object.keys(stockMapping).join(',');
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}`;
-    
     try {
-      const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}&t=${Date.now()}`);
+      const symbols = Object.keys(stockMapping).join(',');
+      const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}`;
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}&t=${Date.now()}`;
+      
+      const response = await fetch(proxyUrl);
       
       if (response.ok) {
         const proxyData = await response.json();
-        const data = JSON.parse(proxyData.contents);
-        const quotes = data?.quoteResponse?.result;
+        
+        // Vérification que le contenu n'est pas vide ou erroné
+        if (proxyData.contents && proxyData.contents.startsWith('{')) {
+          const data = JSON.parse(proxyData.contents);
+          const quotes = data?.quoteResponse?.result;
 
-        if (Array.isArray(quotes)) {
-          quotes.forEach(quote => {
-            const mapping = stockMapping[quote.symbol];
-            if (mapping) {
-              results[mapping.key] = {
-                name: mapping.name,
-                symbol: quote.symbol,
-                currentPrice: quote.regularMarketPrice,
-                change24h: quote.regularMarketChangePercent || 0,
-                isEuro: mapping.isEuro || false
-              };
-            }
-          });
+          if (Array.isArray(quotes)) {
+            quotes.forEach(quote => {
+              const mapping = stockMapping[quote.symbol];
+              if (mapping && quote.regularMarketPrice !== undefined) {
+                results[mapping.key] = {
+                  name: mapping.name,
+                  symbol: quote.symbol,
+                  currentPrice: quote.regularMarketPrice,
+                  change24h: quote.regularMarketChangePercent || 0,
+                  isEuro: mapping.isEuro || false
+                };
+              }
+            });
+          }
         }
       }
     } catch (e) {
-      console.error('Erreur Batch Yahoo:', e);
+      console.error('Erreur Yahoo Finance Batch:', e.message);
     }
 
+    // Renvoi des résultats (même partiels pour éviter le "rien")
     return {
       statusCode: 200,
       headers,
@@ -94,7 +104,11 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ success: false, error: error.message })
+      body: JSON.stringify({ 
+        success: false, 
+        error: "Erreur critique du serveur",
+        details: error.message 
+      })
     };
   }
 };
